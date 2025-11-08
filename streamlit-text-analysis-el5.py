@@ -447,7 +447,7 @@ class TextAnalyzer:
                 dominant_topics.append({
                     'Sentence': documents[i][:100] + '...' if len(documents[i]) > 100 else documents[i],
                     'Dominant Topic': f'Topic {dominant_topic + 1}',
-                    'Topic Weight': doc_topic_dist[dominant_topic]
+                    'Topic Weight': doc_dist[dominant_topic]
                 })
 
             return {
