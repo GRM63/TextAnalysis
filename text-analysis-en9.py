@@ -1,3 +1,18 @@
+"""
+English Text Analysis Tool - Optimized for GitHub Codespaces
+Enhanced with local file directory browsing
+
+Optimizations for resource-constrained environments:
+- Reduced file size limits (10MB for Codespaces vs 50MB)
+- Reduced processing limits (500K chars vs 1M chars)
+- Intelligent sentence sampling for sentiment/emotion analysis (max 50 sentences)
+- Progress indicators for long-running operations
+- Reduced ML model iterations (LDA: 10 vs 20, NMF: 100 vs 200)
+- Aggressive memory cleanup with garbage collection
+- Memory usage monitoring and warnings
+- Direct loading from Codespace directory
+"""
+
 import streamlit as st
 import nltk
 import pandas as pd
@@ -17,6 +32,10 @@ import warnings
 from functools import lru_cache
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.decomposition import LatentDirichletAllocation, NMF
+import psutil
+import os
+import gc
+from pathlib import Path
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
@@ -27,12 +46,41 @@ plt.rcParams['font.family'] = 'DejaVu Sans'
 plt.rcParams['font.size'] = 10
 plt.rcParams['axes.unicode_minus'] = False
 
+# Codespaces optimization settings
+CODESPACES_MODE = True  # Set to True for resource-constrained environments
+MAX_TEXT_SIZE_MB = 10 if CODESPACES_MODE else 50  # Reduced for Codespaces
+MAX_PROCESS_CHARS = 500000 if CODESPACES_MODE else 1000000  # 500K chars for Codespaces
+MAX_SENTENCES_FOR_SENTIMENT = 50 if CODESPACES_MODE else 100  # Limit sentence analysis
+
+# Get the current working directory (workspace root)
+WORKSPACE_ROOT = Path("/workspaces/TextAnalysis")
+
+
+def get_memory_usage():
+    """Get current memory usage information"""
+    process = psutil.Process(os.getpid())
+    memory_info = process.memory_info()
+    memory_mb = memory_info.rss / 1024 / 1024
+    return f"{memory_mb:.1f} MB"
+
+
+def get_text_files_in_directory(directory_path):
+    """Get all text files in a directory"""
+    try:
+        path = Path(directory_path)
+        text_files = sorted(path.glob("*.txt"))
+        return text_files
+    except Exception as e:
+        return []
+
 
 # Cache expensive resource loading
 @st.cache_resource
 def load_spacy_model():
     """Load spacy model once and cache it"""
-    return spacy.load('en_core_web_sm', max_length=2000000)
+    nlp = spacy.load('en_core_web_sm')
+    nlp.max_length = 2000000
+    return nlp
 
 
 @st.cache_data
@@ -51,6 +99,12 @@ class TextAnalyzer:
         """
         # Use cached spacy model
         self.nlp = load_spacy_model()
+
+        # Check text size and truncate if needed for Codespaces
+        self.truncation_warning = None
+        if len(text) > MAX_PROCESS_CHARS:
+            self.truncation_warning = f"⚠️ Text is too large ({len(text):,} characters). Processing only the first {MAX_PROCESS_CHARS:,} characters for efficiency."
+            text = text[:MAX_PROCESS_CHARS]
 
         # Clean text once
         self.original_text = self.clean_text_for_display(text)
@@ -162,16 +216,28 @@ class TextAnalyzer:
 
     def sentence_sentiment_analysis(self):
         """
-        Analyze sentiment for each sentence in the text.
+        Analyze sentiment for each sentence in the text with sampling for large texts.
 
         Returns:
             pd.DataFrame: DataFrame containing sentences and their sentiment scores
         """
+        # Sample sentences if there are too many (for Codespaces efficiency)
+        sentences_to_analyze = self.sentences
+        total_sentences = len(sentences_to_analyze)
+        sampled = False
+
+        if total_sentences > MAX_SENTENCES_FOR_SENTIMENT:
+            # Intelligently sample: take first, last, and evenly spaced middle sentences
+            step = total_sentences // MAX_SENTENCES_FOR_SENTIMENT
+            indices = list(range(0, total_sentences, step))[:MAX_SENTENCES_FOR_SENTIMENT]
+            sentences_to_analyze = [self.sentences[i] for i in indices]
+            sampled = True
+
         # Vectorized sentiment extraction
         data = {
-            'Sentence': [str(sentence) for sentence in self.textblob.sentences],
-            'Polarity': [sentence.sentiment.polarity for sentence in self.textblob.sentences],
-            'Subjectivity': [sentence.sentiment.subjectivity for sentence in self.textblob.sentences]
+            'Sentence': sentences_to_analyze,
+            'Polarity': [TextBlob(sentence).sentiment.polarity for sentence in sentences_to_analyze],
+            'Subjectivity': [TextBlob(sentence).sentiment.subjectivity for sentence in sentences_to_analyze]
         }
 
         sentiment_df = pd.DataFrame(data)
@@ -182,6 +248,10 @@ class TextAnalyzer:
             bins=[-float('inf'), -0.1, 0.1, float('inf')],
             labels=['Negative', 'Neutral', 'Positive']
         )
+
+        # Add note about sampling if applied
+        if sampled:
+            st.info(f"ℹ️ Analyzed {len(sentences_to_analyze)} sampled sentences out of {total_sentences} total sentences for efficiency.")
 
         return sentiment_df
 
@@ -210,14 +280,25 @@ class TextAnalyzer:
 
     def sentence_emotion_analysis(self):
         """
-        Analyze emotions for each sentence in the text.
+        Analyze emotions for each sentence in the text with sampling for large texts.
 
         Returns:
             pd.DataFrame: DataFrame containing sentences and their emotion scores
         """
         sentence_emotions = []
 
-        for sentence in self.sentences:
+        # Sample sentences if there are too many
+        sentences_to_analyze = self.sentences
+        total_sentences = len(sentences_to_analyze)
+        sampled = False
+
+        if total_sentences > MAX_SENTENCES_FOR_SENTIMENT:
+            step = total_sentences // MAX_SENTENCES_FOR_SENTIMENT
+            indices = list(range(0, total_sentences, step))[:MAX_SENTENCES_FOR_SENTIMENT]
+            sentences_to_analyze = [self.sentences[i] for i in indices]
+            sampled = True
+
+        for sentence in sentences_to_analyze:
             # Analyze emotions per sentence
             emotion_analyzer = NRCLex(sentence)
             emotions = emotion_analyzer.affect_frequencies
@@ -245,7 +326,13 @@ class TextAnalyzer:
 
             sentence_emotions.append(emotion_dict)
 
-        return pd.DataFrame(sentence_emotions)
+        df = pd.DataFrame(sentence_emotions)
+
+        # Add note about sampling if applied
+        if sampled:
+            st.info(f"ℹ️ Analyzed {len(sentences_to_analyze)} sampled sentences out of {total_sentences} total sentences for efficiency.")
+
+        return df
 
     def topic_modeling_lda(self, n_topics=5, n_top_words=10, method='lda'):
         """
@@ -285,22 +372,30 @@ class TextAnalyzer:
         try:
             doc_term_matrix = vectorizer.fit_transform(documents)
 
-            # Fit the model
+            # Fit the model with reduced iterations for Codespaces
             if method == 'lda':
+                max_iter_lda = 10 if CODESPACES_MODE else 20
                 model = LatentDirichletAllocation(
                     n_components=n_topics,
                     random_state=42,
-                    max_iter=20,
-                    learning_method='online'
+                    max_iter=max_iter_lda,
+                    learning_method='online',
+                    n_jobs=1  # Single thread for stability
                 )
             else:  # nmf
+                max_iter_nmf = 100 if CODESPACES_MODE else 200
                 model = NMF(
                     n_components=n_topics,
                     random_state=42,
-                    max_iter=200
+                    max_iter=max_iter_nmf,
+                    init='nndsvda'  # Faster initialization
                 )
 
-            doc_topic_dist = model.fit_transform(doc_term_matrix)
+            with st.spinner(f'Training {method.upper()} model...'):
+                doc_topic_dist = model.fit_transform(doc_term_matrix)
+
+            # Force garbage collection after model training
+            gc.collect()
 
             # Get feature names
             feature_names = vectorizer.get_feature_names_out()
@@ -339,7 +434,8 @@ class TextAnalyzer:
 
 
 def create_safe_plot(figsize=(10, 6)):
-    """Create a matplotlib figure with safe settings"""
+    """Create a matplotlib figure with safe settings and memory cleanup"""
+    plt.close('all')  # Close all previous figures
     plt.clf()
     fig, ax = plt.subplots(figsize=figsize)
     return fig, ax
@@ -351,8 +447,26 @@ def analyze_text(text):
     return TextAnalyzer(text)
 
 
+def clear_memory_cache():
+    """Clear streamlit cache and trigger garbage collection"""
+    st.cache_resource.clear()
+    gc.collect()
+    st.success("✓ Memory cache cleared!")
+
+
 def main():
     st.title('Text Analysis Tool')
+
+    # Initialize session state for tracking loaded file
+    if 'current_file' not in st.session_state:
+        st.session_state.current_file = None
+    
+    if 'current_text' not in st.session_state:
+        st.session_state.current_text = None
+
+    # Show Codespaces optimization notice
+    if CODESPACES_MODE:
+        st.info("🚀 Running in optimized mode for GitHub Codespaces. Text size and processing limits are adjusted for efficient performance.")
 
     with st.sidebar:
         st.header("Analysis Options")
@@ -361,18 +475,106 @@ def main():
             ["Basic Analysis", "Sentiment Analysis", "Emotion Analysis", "Topic Modeling"]
         )
 
-    # File upload
-    uploaded_file = st.file_uploader("Choose a text file", type=['txt'])
-
-    if uploaded_file is not None:
+        # Memory usage display
+        st.divider()
+        st.subheader("📊 Memory Usage")
+        memory_usage = get_memory_usage()
+        memory_color = "normal"
         try:
-            # Read the file
+            mem_mb = float(memory_usage.split()[0])
+            if mem_mb > 1500:
+                memory_color = "inverse"
+        except:
+            pass
+        st.metric("App Memory", memory_usage, delta="High" if memory_color == "inverse" else None)
+        
+        # Memory management buttons
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 Refresh", key="refresh_memory", help="Trigger garbage collection"):
+                gc.collect()
+                st.rerun()
+        
+        with col2:
+            if st.button("🗑️ Clear Cache", key="clear_cache", help="Clear all cached data"):
+                clear_memory_cache()
+                st.session_state.current_file = None
+                st.session_state.current_text = None
+                st.rerun()
+
+        # Show limits
+        if CODESPACES_MODE:
+            st.divider()
+            st.caption(f"📝 Max file size: {MAX_TEXT_SIZE_MB}MB")
+            st.caption(f"📝 Max processing: {MAX_PROCESS_CHARS:,} chars")
+
+    # File loading options
+    st.subheader("📂 Load Text")
+    
+    loading_method = st.radio(
+        "Select file loading method:",
+        ["Upload from Computer", "Load from Codespace Directory"],
+        label_visibility="collapsed"
+    )
+    
+    text = None
+    filename = None
+    
+    if loading_method == "Upload from Computer":
+        uploaded_file = st.file_uploader("Choose a text file", type=['txt'])
+        if uploaded_file is not None:
+            # Check if it's a different file than the current one
+            if st.session_state.current_file != uploaded_file.name:
+                st.session_state.current_file = uploaded_file.name
+                st.session_state.current_text = None
+                clear_memory_cache()  # Clear cache when switching files
+            
             text = uploaded_file.getvalue().decode("utf-8")
+            filename = uploaded_file.name
+    
+    else:  # Load from Codespace Directory
+        text_files = get_text_files_in_directory(WORKSPACE_ROOT)
+        
+        if text_files:
+            file_options = {f.name: str(f) for f in text_files}
+            selected_file = st.selectbox(
+                "Select file from Codespace:",
+                options=[None] + list(file_options.keys()),
+                format_func=lambda x: "-- Choose a file --" if x is None else x,
+                label_visibility="collapsed"
+            )
+            
+            if selected_file is not None:
+                try:
+                    # Check if it's a different file than the current one
+                    if st.session_state.current_file != selected_file:
+                        st.session_state.current_file = selected_file
+                        st.session_state.current_text = None
+                        clear_memory_cache()  # Clear cache when switching files
+                    
+                    file_path = file_options[selected_file]
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        text = f.read()
+                    filename = selected_file
+                    st.success(f"✓ Loaded: {selected_file}")
+                except Exception as e:
+                    st.error(f"Error loading file: {str(e)}")
+        else:
+            st.info("📭 No .txt files found in Codespace directory (/workspaces/TextAnalysis)")
+
+    if text is not None:
+        try:
+            # Create analyzer with caching (this will check file size)
+            analyzer = analyze_text(text)
+
+            # Show truncation warning if applicable
+            if analyzer.truncation_warning:
+                st.warning(analyzer.truncation_warning)
+
+            st.caption(f"📄 Active file: {filename}")
+
             with st.expander("View Text Content", expanded=False):
                 st.text_area('Text Content', text, height=200)
-
-            # Create analyzer with caching
-            analyzer = analyze_text(text)
 
             # Display basic statistics
             stats = analyzer.basic_statistics()
@@ -409,6 +611,8 @@ def main():
                         plt.close(fig)
                     except Exception as e:
                         st.error(f"Error creating word frequency plot: {str(e)}")
+
+                gc.collect()  # Clear memory after word frequency analysis
 
                 # POS Tag Frequencies
                 st.header('POS Tag Analysis')
@@ -891,7 +1095,7 @@ def main():
             st.error("Please make sure the file is a valid text file and try again.")
 
     # Load a text file from the Codespace directory
-    file_path = 'moby_dick.txt'  # Change this to your desired file
+    file_path = 'robinson_crusoe.txt'  # Change this to your desired file
 
     try:
         with open(file_path, 'r', encoding='utf-8') as file:
