@@ -1094,28 +1094,5 @@ def main():
             st.error(f"An error occurred while processing the file: {str(e)}")
             st.error("Please make sure the file is a valid text file and try again.")
 
-    # Load a text file from the Codespace directory
-    file_path = 'robinson_crusoe.txt'  # Change this to your desired file
-
-    try:
-        with open(file_path, 'r', encoding='utf-8') as file:
-            content = file.read()
-            # You can directly use the content variable to analyze this text
-            analyzer = analyze_text(content)
-
-            # Display basic statistics
-            stats = analyzer.basic_statistics()
-            st.sidebar.markdown("### Basic Statistics (from file)")
-            st.sidebar.metric("Total Words", f"{stats['Total Words']:.0f}")
-            st.sidebar.metric("Total Sentences", f"{stats['Total Sentences']:.0f}")
-            st.sidebar.metric("Avg Word Length", f"{stats['Average Word Length']:.2f}")
-            st.sidebar.metric("Avg Sentence Length", f"{stats['Average Sentence Length']:.2f}")
-
-    except FileNotFoundError:
-        st.error(f"The file {file_path} does not exist.")
-    except Exception as e:
-        st.error(f"An error occurred: {e}")
-
-
 if __name__ == "__main__":
     main()
