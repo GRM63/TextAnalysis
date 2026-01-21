@@ -50,7 +50,7 @@ plt.rcParams['axes.unicode_minus'] = False
 CODESPACES_MODE = True  # Set to True for resource-constrained environments
 MAX_TEXT_SIZE_MB = 10 if CODESPACES_MODE else 50  # Reduced for Codespaces
 MAX_PROCESS_CHARS = 500000 if CODESPACES_MODE else 1000000  # 500K chars for Codespaces
-MAX_SENTENCES_FOR_SENTIMENT = 50 if CODESPACES_MODE else 100  # Limit sentence analysis
+MAX_SENTENCES_FOR_SENTIMENT = 500 if CODESPACES_MODE else 1000  # Limit sentence analysis
 
 # Get the current working directory (workspace root)
 WORKSPACE_ROOT = Path("/workspaces/TextAnalysis")
