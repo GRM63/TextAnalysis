@@ -95,10 +95,17 @@ def load_greek_sentiment_model():
             model_name = "cardiffnlp/twitter-xlm-roberta-base-sentiment"
             tokenizer = XLMRobertaTokenizer.from_pretrained(model_name)
             model = AutoModelForSequenceClassification.from_pretrained(model_name)
-            # Force CPU usage and reduce batch size to save memory
+            
+            # Automatically detect and use GPU if available, otherwise use CPU
+            device = 0 if torch.cuda.is_available() else -1
+            device_name = "GPU" if device == 0 else "CPU"
+            
+            # Reduce batch size to save memory
             sentiment_analyzer = pipeline("sentiment-analysis", model=model, tokenizer=tokenizer,
-                                         max_length=512, truncation=True, device=-1,
+                                         max_length=512, truncation=True, device=device,
                                          batch_size=1)  # Process one at a time to save memory
+            
+            st.info(f"✓ Sentiment model loaded on {device_name}")
 
             # Force garbage collection after loading
             gc.collect()
